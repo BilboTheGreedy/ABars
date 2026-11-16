@@ -79,6 +79,12 @@ local function place(bar)
 	header:ClearAllPoints()
 	header:SetPoint(pos[1], UIParent, pos[2] or pos[1], pos[3] or 0, pos[4] or 0)
 	header:SetScale(cfg.scale or 1)
+	if not header.Restore then
+		header.Restore = function() place(bar) end
+	end
+	if ACore.RegisterMover then
+		ACore.RegisterMover(header, cfg, nil, "ABars " .. bar.def.title, function() return bar.cfg.enabled end)
+	end
 end
 
 function ns.Layout(bar)

@@ -109,10 +109,10 @@ function ns.ProfileMenu(at)
 			end,
 		}
 	end
-	if #names == 0 then entries[#entries + 1] = { text = "No other characters yet", title = true } end
+	if #names == 0 then entries[#entries + 1] = { text = "No other layouts yet", title = true } end
 	entries[#entries + 1] = {
-		text = "Reset this character",
-		func = function() UI.Confirm("Reset the ABars layout for this character?", ns.ResetProfile) end,
+		text = "Reset this layout",
+		func = function() UI.Confirm("Reset the ABars layout?", ns.ResetProfile) end,
 	}
 	entries[#entries + 1] = { text = "< Back", func = function() ns.OpenOptions(at) end }
 	UI.Menu(at, entries)

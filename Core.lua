@@ -88,12 +88,14 @@ function ns.CharKey()
 end
 
 ns:Listen("LOGIN", function()
-	local key = ns.CharKey()
+	ns.db.stamps = ns.db.stamps or {}
+	local own = ns.db.profiles[ns.CharKey()]
+	local fresh = type(ns.db.profiles[ACore.Profile()]) ~= "table"
+	local key = ACore.ProfileSync(ns.db.profiles, ns.db.stamps)
 	ns.charKey = key
 	local p = ns.db.profiles[key]
-	if type(p) ~= "table" then
-		p = {}
-		ns.db.profiles[key] = p
+	if fresh and type(own) == "table" and next(p) == nil then
+		for k, v in pairs(ACore.Copy(own)) do p[k] = v end
 	end
 	ACore.Fill(p, profile())
 	ns.p = p
