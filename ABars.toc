@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: ABars
+## Notes: Action bars, pet bar and stance bar
+## Version: 0.1.0
+## Category: Action Bars
+## IconTexture: Interface\Icons\INV_Misc_Gear_02
+## Dependencies: ACore
+## SavedVariables: ABarsDB
+
+Core.lua
+Button.lua
+Bars.lua
+Binds.lua
+Blizzard.lua
+Options.lua
