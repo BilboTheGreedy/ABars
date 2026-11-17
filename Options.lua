@@ -81,6 +81,7 @@ function ns.BarMenu(key, at)
 		pick("Faded opacity", "fadeAlpha", { 0.6, 0.5, 0.35, 0.2, 0 }, percent, true),
 		UI.Check(cfg, "mouseover", "Show only on mouseover", refreshButtons),
 		UI.Check(cfg, "hideEmpty", "Hide empty buttons", refreshButtons),
+		UI.Check(cfg, "clickThrough", "Click through", function() relayout(key) end),
 		{
 			text = "Reset position",
 			func = function()
@@ -118,8 +119,29 @@ function ns.ProfileMenu(at)
 	UI.Menu(at, entries)
 end
 
-function ns.OpenOptions(at)
-	if not ns.p then return end
+function ns.BlizzardMenu(at)
+	at = at or menuAnchor()
+	local entries = { { text = "Hide default frames", title = true } }
+	for _, g in ipairs(ns.BLIZZARD) do
+		entries[#entries + 1] = UI.Check(ns.p.blizzard, g.key, g.text, function()
+			local ok, reload = ns.HideBlizzard()
+			if not ok then
+				ns.Print("change applies when combat ends")
+			elseif reload then
+				ns.Print("the default bar comes back after /reload")
+			end
+			ns.BlizzardMenu(at)
+		end)
+	end
+	entries[#entries + 1] = { text = "< Back", func = function() ns.OpenOptions(at) end }
+	UI.Menu(at, entries)
+end
+
+local function textLabel(v)
+	return v == 0 and "Default" or tostring(v)
+end
+
+function ns.Options(at)
 	at = at or menuAnchor()
 	local p = ns.p
 	local entries = {
@@ -127,17 +149,22 @@ function ns.OpenOptions(at)
 		{ text = p.locked and "Unlock bars to move them" or "Lock bars", func = function() ns.SetLocked(not p.locked) end },
 		{ text = ns.bindMode and "Leave keybind mode" or "Keybind mode", func = function() ns.ToggleBindMode() end },
 		UI.Check(p, "snap", "Snap to grid when moving"),
-		UI.Check(p, "dragLock", "Hold shift to drag spells off bars"),
+		UI.Check(p, "dragLock", "Hold the pickup key (shift) to drag spells off bars"),
 		UI.Check(p, "hotkeys", "Show key text", refreshButtons),
 		UI.Check(p, "macroNames", "Show macro names", refreshButtons),
 		UI.Check(p, "range", "Red when out of range", refreshButtons),
-		UI.Check(p, "hideBlizzard", "Hide the default bars", function(on)
-			if on then
-				ns.HideBlizzard()
-			else
-				ns.Print("the default bars come back after /reload")
-			end
-		end),
+		UI.Check(p, "cdText", "Cooldown numbers", function() relayout() end),
+		UI.Check(p, "glow", "Highlight procs", refreshButtons),
+		{
+			text = "Text size: " .. textLabel(p.textSize or 0),
+			func = function()
+				choice(at, "Text size", { 0, 9, 10, 11, 12, 14, 16 }, p.textSize or 0, function(v)
+					p.textSize = v
+					relayout()
+				end, textLabel)
+			end,
+		},
+		{ text = "Hide default frames", func = function() ns.BlizzardMenu(at) end },
 		{ text = "Bars", title = true },
 	}
 	for _, def in ipairs(ns.BARS) do
@@ -150,7 +177,13 @@ function ns.OpenOptions(at)
 	end
 	entries[#entries + 1] = { text = "Characters", title = true }
 	entries[#entries + 1] = { text = "Copy or reset layout", func = function() ns.ProfileMenu(at) end }
-	UI.Menu(at, entries)
+	return entries
+end
+
+function ns.OpenOptions(at)
+	if not ns.p then return end
+	at = at or menuAnchor()
+	UI.Menu(at, ns.Options(at))
 end
 
 local function handle(bar)
@@ -199,6 +232,7 @@ function ns.SetLocked(locked)
 		return false
 	end
 	ns.p.locked = locked and true or false
+	if not ns.p.locked and ACore.LayoutActive and ACore.LayoutActive() then ACore.LayoutMode(false) end
 	for _, bar in ipairs(ns.barList) do
 		local h = handle(bar)
 		if bar.moving then
@@ -225,4 +259,9 @@ end)
 
 ns:Listen("START", function()
 	if not ns.p.locked then ns.p.locked = true end
+	if ACore.OnLayout then
+		ACore.OnLayout(function(on)
+			if on and ns.p and not ns.p.locked then ns.SetLocked(true) end
+		end)
+	end
 end)

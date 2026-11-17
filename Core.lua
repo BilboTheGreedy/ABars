@@ -25,9 +25,12 @@ local function profile()
 		hotkeys = true,
 		macroNames = false,
 		range = true,
-		hideBlizzard = true,
 		snap = true,
 		dragLock = true,
+		cdText = true,
+		glow = true,
+		textSize = 0,
+		blizzard = { main = true, multi = true, stance = true, pet = true, micro = false, bags = false },
 		bars = {
 			bar1 = bar(true, 12, 12, { "BOTTOM", "BOTTOM", 0, 40 }),
 			bar2 = bar(true, 12, 12, { "BOTTOM", "BOTTOM", 0, 82 }),
@@ -87,6 +90,19 @@ function ns.CharKey()
 	return tostring(name) .. " - " .. tostring(realm)
 end
 
+local function fill(p)
+	if p.hideBlizzard == false and type(p.blizzard) ~= "table" then
+		p.blizzard = { main = false, multi = false, stance = false, pet = false, micro = false, bags = false }
+	end
+	p.hideBlizzard = nil
+	local base = profile()
+	ACore.Fill(p, base)
+	for key, cfg in pairs(base.bars) do
+		p.bars[key].default = cfg.default
+	end
+	return p
+end
+
 ns:Listen("LOGIN", function()
 	ns.db.stamps = ns.db.stamps or {}
 	local own = ns.db.profiles[ns.CharKey()]
@@ -97,7 +113,7 @@ ns:Listen("LOGIN", function()
 	if fresh and type(own) == "table" and next(p) == nil then
 		for k, v in pairs(ACore.Copy(own)) do p[k] = v end
 	end
-	ACore.Fill(p, profile())
+	fill(p)
 	ns.p = p
 	ns:Fire("START")
 end)
@@ -108,7 +124,7 @@ function ns.CopyProfile(from)
 	local p = ns.p
 	for k in pairs(p) do p[k] = nil end
 	for k, v in pairs(copy(src)) do p[k] = v end
-	ACore.Fill(p, profile())
+	fill(p)
 	ns:Fire("PROFILE")
 	return true
 end
@@ -116,7 +132,7 @@ end
 function ns.ResetProfile()
 	local p = ns.p
 	for k in pairs(p) do p[k] = nil end
-	ACore.Fill(p, profile())
+	fill(p)
 	ns:Fire("PROFILE")
 end
 
@@ -126,6 +142,10 @@ ACore.Register({
 	slash = "/abars",
 	desc = "action bars",
 	toggle = function() ns.OpenOptions() end,
+	options = function()
+		if not ns.p or not ns.Options then return {} end
+		return ns.Options()
+	end,
 })
 
 SLASH_ABARS1 = "/abars"

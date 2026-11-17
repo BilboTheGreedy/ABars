@@ -27,7 +27,7 @@ function ns.ApplyBindings()
 		for _, b in ipairs(ns.buttons) do
 			if b.active and b.command and SetOverrideBindingClick then
 				for _, key in ipairs(keys(b)) do
-					SetOverrideBindingClick(owner, false, key, b.buttonName, "LeftButton")
+					SetOverrideBindingClick(owner, false, key, b.buttonName, "Keybind")
 				end
 			end
 			Button.Hotkey(b)

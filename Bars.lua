@@ -9,6 +9,25 @@ ns.barList = {}
 
 local PAGE = "[bonusbar:5]11;[bar:2]2;[bar:3]3;[bar:4]4;[bar:5]5;[bar:6]6;[bonusbar:1]7;[bonusbar:2]8;[bonusbar:3]9;[bonusbar:4]10;1"
 
+local function index(name)
+	local fn = (C_ActionBar and C_ActionBar[name]) or _G[name]
+	if not fn then return nil end
+	local ok, n = pcall(fn)
+	if ok and not ns.IsSecret(n) and type(n) == "number" and n > 0 then return n end
+	return nil
+end
+
+local function pageDriver()
+	local out = {}
+	local override, vehicle, temp = index("GetOverrideBarIndex"), index("GetVehicleBarIndex"), index("GetTempShapeshiftBarIndex")
+	if override then out[#out + 1] = "[overridebar]" .. override end
+	if vehicle then out[#out + 1] = "[vehicleui][possessbar]" .. vehicle end
+	if temp then out[#out + 1] = "[shapeshift]" .. temp end
+	out[#out + 1] = PAGE
+	return table.concat(out, ";")
+end
+ns.PageDriver = pageDriver
+
 local PAGING = [[
 	local offset = (tonumber(newstate) - 1) * 12
 	self:SetAttribute("page", newstate)
@@ -52,6 +71,8 @@ local function create(def)
 			b.slot = def.offset + i
 			b:SetAttribute("type", "action")
 			b:SetAttribute("action", b.slot)
+			b:SetAttribute("checkselfcast", true)
+			b:SetAttribute("checkfocuscast", true)
 			if header.SetFrameRef then header:SetFrameRef("b" .. i, b) end
 		elseif def.kind == "pet" then
 			b:SetAttribute("type", "pet")
@@ -65,8 +86,9 @@ local function create(def)
 	end
 	if def.paged and RegisterStateDriver then
 		header:SetAttribute("_onstate-page", PAGING)
-		RegisterStateDriver(header, "page", PAGE)
+		RegisterStateDriver(header, "page", pageDriver())
 	end
+	header.Restore = function() ns.Place(bar) end
 	bars[def.key] = bar
 	ns.barList[#ns.barList + 1] = bar
 	return bar
@@ -79,12 +101,16 @@ local function place(bar)
 	header:ClearAllPoints()
 	header:SetPoint(pos[1], UIParent, pos[2] or pos[1], pos[3] or 0, pos[4] or 0)
 	header:SetScale(cfg.scale or 1)
-	if not header.Restore then
-		header.Restore = function() place(bar) end
-	end
 	if ACore.RegisterMover then
-		ACore.RegisterMover(header, cfg, nil, "ABars " .. bar.def.title, function() return bar.cfg.enabled end)
+		ACore.RegisterMover(header, cfg, nil, "ABars " .. bar.def.title, function()
+			return bar.cfg.enabled and (bar.count or 1) > 0
+		end)
 	end
+end
+
+function ns.Place(bar)
+	if not bar.cfg then return false end
+	return ns.Safe("place:" .. bar.def.key, function() place(bar) end)
 end
 
 function ns.Layout(bar)
@@ -95,7 +121,7 @@ function ns.Layout(bar)
 		local forms = stanceCount()
 		for i = 1, bar.max do
 			local _, _, _, spell = ns.StanceInfo(i)
-			if spell ~= nil then bar.buttons[i]:SetAttribute("spell", spell) end
+			if ns.Present(spell) then bar.buttons[i]:SetAttribute("spell", spell) end
 		end
 		count = math.min(count, forms)
 	end
@@ -103,6 +129,8 @@ function ns.Layout(bar)
 	local size, gap = cfg.size or 36, cfg.spacing or 3
 	for i, b in ipairs(bar.buttons) do
 		b.cfg = cfg
+		Button.Style(b)
+		b:EnableMouse(not cfg.clickThrough)
 		if i <= count then
 			local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
 			b:SetSize(size, size)
@@ -117,8 +145,8 @@ function ns.Layout(bar)
 	end
 	local rows = math.max(1, math.ceil(count / cols))
 	bar.header:SetSize(math.max(size, cols * (size + gap) - gap), math.max(size, rows * (size + gap) - gap))
-	place(bar)
 	bar.count = count
+	place(bar)
 	if RegisterStateDriver then
 		if UnregisterStateDriver then UnregisterStateDriver(bar.header, "visibility") end
 		local cond = condition(bar)
@@ -170,7 +198,7 @@ local function fade(inCombat)
 		local cfg = bar.cfg
 		if cfg and cfg.enabled then
 			local alpha = cfg.alpha or 1
-			if not ns.p.locked or ns.bindMode then
+			if not ns.p.locked or ns.bindMode or (ns.grid and bar.def.kind == "action") then
 				alpha = 1
 			elseif cfg.mouseover then
 				local over = bar.header.IsMouseOver and bar.header:IsMouseOver()
@@ -198,9 +226,17 @@ local function grid(on)
 	for _, b in ipairs(ns.buttons) do
 		if b.active then Button.Alpha(b) end
 	end
+	fade(combat)
+end
+
+local function glow(id, on)
+	if ns.IsSecret(id) or type(id) ~= "number" then return end
+	ns.glows[id] = on or nil
+	Button.UpdateAll("action")
 end
 
 ns:Listen("START", function()
+	ns.glows = {}
 	for _, def in ipairs(ns.BARS) do create(def) end
 	ns.LayoutAll()
 
@@ -230,7 +266,13 @@ ns:Listen("START", function()
 	ns:On("ACTIONBAR_PAGE_CHANGED", actions)
 	ns:On("UPDATE_BONUS_ACTIONBAR", actions)
 	ns:On("ACTIONBAR_UPDATE_STATE", actions)
+	ns:On("UPDATE_OVERRIDE_ACTIONBAR", actions)
+	ns:On("UPDATE_VEHICLE_ACTIONBAR", actions)
+	ns:On("UPDATE_POSSESS_BAR", actions)
+	ns:On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", function(id) glow(id, true) end)
+	ns:On("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", function(id) glow(id, false) end)
 	ns:On("ACTIONBAR_UPDATE_USABLE", function() Button.TintAll() end)
+	ns:On("ACTION_USABLE_CHANGED", function() Button.TintAll() end)
 	ns:On("SPELL_UPDATE_USABLE", function() Button.TintAll() end)
 	ns:On("PLAYER_TARGET_CHANGED", function() Button.TintAll() end)
 	ns:On("ACTIONBAR_UPDATE_COOLDOWN", function() Button.CooldownAll() end)

@@ -21,9 +21,16 @@ local function call(name, ...)
 end
 
 local function plain(v)
-	if v == nil or ns.IsSecret(v) then return nil, true end
+	if ns.IsSecret(v) then return nil, true end
+	if v == nil then return nil, true end
 	return v, false
 end
+
+local function present(v)
+	if ns.IsSecret(v) then return true end
+	return v ~= nil
+end
+ns.Present = present
 
 local function cooldown(slot)
 	if GetActionCooldown then
@@ -33,19 +40,47 @@ local function cooldown(slot)
 	end
 	if AB.GetActionCooldown then
 		local ok, info = pcall(AB.GetActionCooldown, slot)
-		if ok and type(info) == "table" then return info.startTime, info.duration, info.isEnabled, info.modRate end
+		if ok and type(info) == "table" then
+			if not ns.IsSecret(info.isActive) and info.isActive == false then return nil end
+			return info.startTime, info.duration, info.isEnabled, info.modRate
+		end
 	end
 	return nil
 end
 
 local function setCooldown(cd, start, duration, rate)
-	if start == nil or duration == nil then
+	if not present(start) or not present(duration) then
 		if cd.Clear then cd:Clear() end
 		return
 	end
-	if not pcall(cd.SetCooldown, cd, start, duration, rate) then
+	if not present(rate) or not pcall(cd.SetCooldown, cd, start, duration, rate) then
 		pcall(cd.SetCooldown, cd, start, duration)
 	end
+end
+
+local function actionCooldown(b)
+	local cd = b.cd
+	if AB.GetActionCooldownDuration and cd.SetCooldownFromDurationObject then
+		local ok, d = pcall(AB.GetActionCooldownDuration, b.slot)
+		if ok and present(d) and pcall(cd.SetCooldownFromDurationObject, cd, d) then return end
+	end
+	setCooldown(cd, cooldown(b.slot))
+end
+
+local CURSOR = { spell = true, item = true, macro = true, petaction = true, mount = true, companion = true, flyout = true, equipmentset = true, toy = true, battlepet = true }
+
+local function cursorHolds()
+	if not GetCursorInfo then return false end
+	local kind = plain((GetCursorInfo()))
+	return kind ~= nil and CURSOR[kind] == true
+end
+
+local function pickupKey()
+	if IsModifiedClick then
+		local ok, down = pcall(IsModifiedClick, "PICKUPACTION")
+		if ok then return down and true or false end
+	end
+	return IsShiftKeyDown and IsShiftKeyDown() and true or false
 end
 
 local REPLACE = {
@@ -67,7 +102,7 @@ local function petInfo(id)
 	if not GetPetActionInfo then return nil end
 	local ok, name, texture, isToken, isActive, autoAllowed, autoEnabled = pcall(GetPetActionInfo, id)
 	if not ok then return nil end
-	if isToken and type(texture) == "string" and not ns.IsSecret(texture) then texture = _G[texture] end
+	if plain(isToken) and not ns.IsSecret(texture) and type(texture) == "string" then texture = _G[texture] end
 	return name, texture, isActive, autoAllowed, autoEnabled
 end
 
@@ -95,6 +130,22 @@ local function showTooltip(b)
 		shown = pcall(GameTooltip.SetShapeshift, GameTooltip, b.id)
 	end
 	if shown then GameTooltip:Show() else GameTooltip:Hide() end
+end
+
+local function now()
+	return GetTime and GetTime() or 0
+end
+
+local function dropActive(b)
+	return b.dropped ~= nil and now() - b.dropped < 3
+end
+
+local function release(b)
+	if not b.held then return end
+	ns.Safe("held:" .. b.buttonName, function()
+		b.held = nil
+		b:SetAttribute("useOnKeyDown", nil)
+	end)
 end
 
 function Button.Create(name, parent, kind, id)
@@ -130,6 +181,12 @@ function Button.Create(name, parent, kind, id)
 	b.auto:SetSize(6, 6)
 	b.auto:SetPoint("TOPLEFT", 2, -2)
 	b.auto:Hide()
+	b.glow = UI.Border(b.over, { 1, 0.9, 0.35, 1 })
+	b.glow[1]:SetHeight(2)
+	b.glow[2]:SetHeight(2)
+	b.glow[3]:SetWidth(2)
+	b.glow[4]:SetWidth(2)
+	for i = 1, 4 do b.glow[i]:Hide() end
 
 	b:SetScript("OnEnter", function(self)
 		ns.hover = self
@@ -141,26 +198,73 @@ function Button.Create(name, parent, kind, id)
 		if GameTooltip then GameTooltip:Hide() end
 		ns:Fire("HOVER", nil)
 	end)
-	b:SetScript("PreClick", function(self)
-		self.flash:Show()
-		ns.After(0.12, function() self.flash:Hide() end)
+	b:SetScript("PreClick", function(self, button, down)
+		if not self.flashing then
+			self.flashing = true
+			self.flash:Show()
+			ns.After(0.12, function()
+				self.flashing = nil
+				self.flash:Hide()
+			end)
+		end
+		if ns.InCombat() or self.kind == "stance" then return end
+		if down and button ~= "Keybind" then
+			if ns.p.dragLock and pickupKey() and self:IsMouseOver() then
+				self.held = true
+				self:SetAttribute("useOnKeyDown", false)
+			else
+				release(self)
+			end
+		end
+		if self.kind ~= "action" then return end
+		if down then
+			self.dropped = nil
+			if cursorHolds() then self.dropping = true end
+		end
+		if self.dropping or dropActive(self) then self:SetAttribute("type", "empty") end
 	end)
-	b:SetScript("PostClick", function(self, button)
-		if self.kind == "pet" and button == "RightButton" and TogglePetAutocast and not ns.InCombat() then
+	b:SetScript("PostClick", function(self, button, down)
+		if self.kind == "pet" and button == "RightButton" and not down and TogglePetAutocast and not ns.InCombat() then
 			pcall(TogglePetAutocast, self.id)
 		end
+		if self.kind == "action" and (self.dropping or self.dropped) and not ns.InCombat() then
+			self:SetAttribute("type", "action")
+			if self.dropping then
+				self.dropping = nil
+				self.dropped = now()
+				if self.slot and PlaceAction then pcall(PlaceAction, self.slot) end
+			elseif not down then
+				self.dropped = nil
+				self.dropEnd = now()
+			end
+		end
+		if not down then release(self) end
 		Button.Update(self)
 	end)
+	if kind == "pet" then
+		b:RegisterForDrag("LeftButton", "RightButton")
+		local function swap(self, drop)
+			if ns.InCombat() or not PickupPetAction then return end
+			if not drop and ns.p.dragLock and not pickupKey() then return end
+			release(self)
+			pcall(PickupPetAction, self.id)
+			Button.Update(self)
+		end
+		b:SetScript("OnDragStart", function(self) swap(self, false) end)
+		b:SetScript("OnReceiveDrag", function(self) swap(self, true) end)
+	end
 	if kind == "action" then
 		b:RegisterForDrag("LeftButton", "RightButton")
 		b:SetScript("OnDragStart", function(self)
 			if ns.InCombat() or not self.slot or not PickupAction then return end
-			if ns.p.dragLock and not (IsShiftKeyDown and IsShiftKeyDown()) then return end
+			if ns.p.dragLock and not pickupKey() then return end
+			release(self)
 			pcall(PickupAction, self.slot)
 			Button.Update(self)
 		end)
 		b:SetScript("OnReceiveDrag", function(self)
 			if ns.InCombat() or not self.slot or not PlaceAction then return end
+			if dropActive(self) or (self.dropEnd and now() - self.dropEnd < 0.3) then return end
 			pcall(PlaceAction, self.slot)
 			Button.Update(self)
 		end)
@@ -182,6 +286,10 @@ end
 local function tint(b)
 	local icon = b.icon
 	if b.kind ~= "action" or not b.has then
+		if b.far then
+			b.far = nil
+			b.hotkey:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+		end
 		icon:SetVertexColor(1, 1, 1)
 		if icon.SetDesaturated then icon:SetDesaturated(false) end
 		return
@@ -200,33 +308,61 @@ local function tint(b)
 			grey = true
 		end
 	end
-	if ns.p.range and not grey then
+	local far = false
+	if ns.p.range then
 		local inRange = plain(call("IsActionInRange", b.slot))
-		if inRange == false or inRange == 0 then r, g, bl = 0.9, 0.25, 0.25 end
+		far = inRange == false or inRange == 0
+		if far and not grey then r, g, bl = 0.9, 0.25, 0.25 end
+	end
+	if b.far ~= far then
+		b.far = far
+		if far then
+			b.hotkey:SetTextColor(0.95, 0.25, 0.25)
+		else
+			b.hotkey:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+		end
 	end
 	icon:SetVertexColor(r, g, bl)
 	if icon.SetDesaturated then icon:SetDesaturated(grey) end
 end
 Button.Tint = tint
 
+local function glowing(slot)
+	if not ns.p.glow or not ns.glows or next(ns.glows) == nil then return false end
+	local kind, id = call("GetActionInfo", slot)
+	kind, id = plain(kind), plain(id)
+	if kind ~= "spell" or id == nil then return false end
+	return ns.glows[id] == true
+end
+
 local function updateAction(b)
 	local slot = b.slot
-	local texture = slot and call("GetActionTexture", slot)
-	local has = slot and call("HasAction", slot)
-	has = plain(has)
-	b.has = (has or texture ~= nil) and true or false
-	if texture ~= nil then
+	local texture, has
+	if slot then
+		texture = call("GetActionTexture", slot)
+		has = plain(call("HasAction", slot))
+	end
+	b.has = (has or present(texture)) and true or false
+	local lit = b.has and glowing(slot)
+	if b.lit ~= lit then
+		b.lit = lit
+		for i = 1, 4 do b.glow[i]:SetShown(lit) end
+	end
+	if present(texture) then
 		b.icon:SetTexture(texture)
 		b.icon:Show()
 	else
 		b.icon:Hide()
 	end
 	if b.has then
-		setCooldown(b.cd, cooldown(slot))
+		actionCooldown(b)
 		local count = ""
 		local consumable = plain(call("IsConsumableAction", slot))
 		local stackable = plain(call("IsStackableAction", slot))
-		if consumable or stackable then
+		if AB.GetActionDisplayCount then
+			local ok, text = pcall(AB.GetActionDisplayCount, slot, 999)
+			if ok and present(text) then count = text end
+		elseif consumable or stackable then
 			local n, secret = plain(call("GetActionCount", slot))
 			if secret then
 				count = call("GetActionCount", slot)
@@ -261,8 +397,8 @@ end
 
 local function updatePet(b)
 	local name, texture, active, autoAllowed, autoEnabled = petInfo(b.id)
-	b.has = name ~= nil
-	if texture ~= nil then
+	b.has = present(name)
+	if present(texture) then
 		b.icon:SetTexture(texture)
 		b.icon:Show()
 	else
@@ -294,8 +430,8 @@ end
 
 local function updateStance(b)
 	local icon, active, castable = stanceInfo(b.id)
-	b.has = icon ~= nil
-	if icon ~= nil then
+	b.has = present(icon)
+	if present(icon) then
 		b.icon:SetTexture(icon)
 		b.icon:Show()
 	else
@@ -361,7 +497,7 @@ function Button.CooldownAll()
 	for _, b in ipairs(ns.buttons) do
 		if b.active and b.has then
 			if b.kind == "action" then
-				setCooldown(b.cd, cooldown(b.slot))
+				actionCooldown(b)
 			elseif b.kind == "pet" and GetPetActionCooldown then
 				local ok, start, duration = pcall(GetPetActionCooldown, b.id)
 				if ok then setCooldown(b.cd, start, duration) end
@@ -373,5 +509,17 @@ end
 function Button.TintAll()
 	for _, b in ipairs(ns.buttons) do
 		if b.active and b.kind == "action" then tint(b) end
+	end
+end
+
+function Button.Style(b)
+	if b.cd.SetHideCountdownNumbers then b.cd:SetHideCountdownNumbers(not ns.p.cdText) end
+	local size = ns.p.textSize or 0
+	for _, fs in ipairs({ b.hotkey, b.count, b.label }) do
+		local path, base, flags = fs:GetFont()
+		if type(path) == "string" and type(base) == "number" then
+			if not fs.baseSize then fs.baseSize = base end
+			fs:SetFont(path, size > 0 and size or fs.baseSize, flags)
+		end
 	end
 end
